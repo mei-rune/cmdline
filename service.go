@@ -10,9 +10,11 @@ import (
 	"path/filepath"
 	"strings"
 	"unicode"
+
+	"github.com/mattn/go-shellwords"
 )
 
-type serviceExtractorFn func(args []string) string
+type serviceExtractorFn func(args []string) (*CommandLine, error)
 
 const (
 	javaJarFlag      = "-jar"
@@ -34,45 +36,56 @@ var binsWithContext = map[string]serviceExtractorFn{
 }
 
 type CommandLine struct {
-	cmdline        []string
-	serviceContext string
+	Line        string
+	ExecutePath string
+	Args        []string
+
+	Service string
+
+	JavaArgs *JavaArgs
+}
+
+type JavaArgs struct {
+	ClassName string
+	JmxEnable bool
+	JmxPort   int
 }
 
 func ParseCommandLine(s string) (*CommandLine, error) {
-	return nil, errors.New("no implement")
-}
-
-func extractServiceMetadata(cmd []string) *CommandLine {
-	if len(cmd) == 0 || len(cmd[0]) == 0 {
+	if len(s) == 0 {
 		return &CommandLine{
-			cmdline: cmd,
-		}
+			Line: s,
+		}, nil
 	}
 
-	exe := cmd[0]
-	// check if all args are packed into the first argument
-	if len(cmd) == 1 {
-		if idx := strings.IndexRune(exe, ' '); idx != -1 {
-			exe = exe[0:idx]
-			cmd = strings.Split(cmd[0], " ")
-		}
+	_, args, err := shellwords.ParseWithEnvs(s)
+	if err != nil {
+		return nil, err
+	}
+	if len(args) == 0 {
+		return nil, errors.New("invalid command - `" + s + "`")
 	}
 
+	exe := args[0]
 	// trim any quotes from the executable
 	exe = strings.Trim(exe, "\"")
+	return Parse(exe, args[1:])
+}
 
-	// Extract executable from commandline args
-	exe = trimColonRight(removeFilePath(exe))
-	if !isRuneLetterAt(exe, 0) {
-		exe = parseExeStartWithSymbol(exe)
+func Parse(exe string, args []string) (*CommandLine, error) {
+	exe = removeFilePath(exe)
+
+	if ext := filepath.Ext(exe); strings.ToLower(ext) == ".exe" {
+		exe = strings.TrimSuffix(exe, ext)
 	}
 
 	if contextFn, ok := binsWithContext[exe]; ok {
-		tag := contextFn(cmd[1:])
-		return &CommandLine{
-			cmdline:        cmd,
-			serviceContext: "process_context:" + tag,
-		}
+		return contextFn(cmd[1:])
+	}
+
+	baseExe, _ := splitVersion(exe)
+	if contextFn, ok := binsWithContext[exe]; ok {
+		return contextFn(cmd[1:])
 	}
 
 	// trim trailing file extensions
@@ -81,9 +94,9 @@ func extractServiceMetadata(cmd []string) *CommandLine {
 	}
 
 	return &CommandLine{
-		cmdline:        cmd,
-		serviceContext: "process_context:" + exe,
-	}
+		Line:    cmd,
+		Service: exe,
+	}, nil
 }
 
 func removeFilePath(s string) string {
@@ -93,31 +106,14 @@ func removeFilePath(s string) string {
 	return s
 }
 
-// trimColonRight will remove any colon and it's associated value right of the string
-func trimColonRight(s string) string {
-	if i := strings.Index(s, ":"); i > 0 {
-		return s[:i]
+func splitVersion(s string) (string, string) {
+	runes := []rune(s)
+	for index := len(runes) - 1; index >= 0; index-- {
+		if !unicode.IsDigit(runes[index]) && runes[index] != '.' {
+			return s[:index+1], s[index+1:]
+		}
 	}
-
-	return s
-}
-
-func isRuneLetterAt(s string, position int) bool {
-	return len(s) > position && unicode.IsLetter(rune(s[position]))
-}
-
-// parseExeStartWithSymbol deals with exe that starts with special chars like "(", "-" or "["
-func parseExeStartWithSymbol(exe string) string {
-	if exe == "" {
-		return exe
-	}
-	// drop the first character
-	result := exe[1:]
-	// if last character is also special character, also drop it
-	if result != "" && !isRuneLetterAt(result, len(result)-1) {
-		result = result[:len(result)-1]
-	}
-	return result
+	return "", s
 }
 
 // In most cases, the best context is the first non-argument / environment variable, if it exists
