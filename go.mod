@@ -1,4 +1,4 @@
-module github.com/mei-rune/commandline
+module github.com/mei-rune/cmdline
 
 go 1.20
 
