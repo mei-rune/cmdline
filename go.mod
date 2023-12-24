@@ -5,6 +5,7 @@ go 1.20
 require (
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/go-ole/go-ole v1.2.6 // indirect
+	github.com/mattn/go-shellwords v1.0.12 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/shirou/gopsutil v3.21.11+incompatible // indirect
 	github.com/stretchr/objx v0.5.0 // indirect

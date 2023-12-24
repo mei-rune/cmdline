@@ -14,7 +14,7 @@ import (
 	"github.com/mattn/go-shellwords"
 )
 
-type serviceExtractorFn func(args []string) (*CommandLine, error)
+type serviceExtractorFn func(cmdline *CommandLine) error
 
 const (
 	javaJarFlag      = "-jar"
@@ -28,34 +28,48 @@ var binsWithContext = map[string]serviceExtractorFn{
 	"python2.7": parseCommandContextPython,
 	"python3":   parseCommandContextPython,
 	"python3.7": parseCommandContextPython,
-	"ruby2.3":   parseCommandContext,
-	"ruby":      parseCommandContext,
+	"ruby2.3":   parseCommandContextRuby,
+	"ruby":      parseCommandContextRuby,
 	"java":      parseCommandContextJava,
 	"java.exe":  parseCommandContextJava,
 	"sudo":      parseCommandContext,
 }
 
 type CommandLine struct {
-	Line        string
 	ExecutePath string
 	Args        []string
 
-	Service string
+	Sub    *SubCommand
+	Ruby   *RubyArgs
+	Python *PythonArgs
+	Java   *JavaArgs
+}
 
-	JavaArgs *JavaArgs
+type SubCommand struct {
+	Command string
+	Args        []string
+}
+
+type RubyArgs struct {
+	FilePath string
+	Args        []string
+}
+
+type PythonArgs struct {
+	FilePath string
+	Args        []string
 }
 
 type JavaArgs struct {
 	ClassName string
 	JmxEnable bool
 	JmxPort   int
+	Args        []string
 }
 
 func ParseCommandLine(s string) (*CommandLine, error) {
 	if len(s) == 0 {
-		return &CommandLine{
-			Line: s,
-		}, nil
+		return &CommandLine{}, nil
 	}
 
 	_, args, err := shellwords.ParseWithEnvs(s)
@@ -73,6 +87,11 @@ func ParseCommandLine(s string) (*CommandLine, error) {
 }
 
 func Parse(exe string, args []string) (*CommandLine, error) {
+	c := &CommandLine{
+		ExecutePath: exe,
+		Args:        args,
+	}
+
 	exe = removeFilePath(exe)
 
 	if ext := filepath.Ext(exe); strings.ToLower(ext) == ".exe" {
@@ -80,23 +99,20 @@ func Parse(exe string, args []string) (*CommandLine, error) {
 	}
 
 	if contextFn, ok := binsWithContext[exe]; ok {
-		return contextFn(cmd[1:])
+		return c, contextFn(c)
 	}
 
 	baseExe, _ := splitVersion(exe)
-	if contextFn, ok := binsWithContext[exe]; ok {
-		return contextFn(cmd[1:])
+	if contextFn, ok := binsWithContext[baseExe]; ok {
+		return c, contextFn(c)
 	}
 
-	// trim trailing file extensions
-	if i := strings.LastIndex(exe, "."); i > 0 {
-		exe = exe[:i]
-	}
+	// // trim trailing file extensions
+	// if i := strings.LastIndex(exe, "."); i > 0 {
+	// 	exe = exe[:i]
+	// }
 
-	return &CommandLine{
-		Line:    cmd,
-		Service: exe,
-	}, nil
+	return c, nil
 }
 
 func removeFilePath(s string) string {
@@ -117,40 +133,65 @@ func splitVersion(s string) (string, string) {
 }
 
 // In most cases, the best context is the first non-argument / environment variable, if it exists
-func parseCommandContext(args []string) string {
+func parseCommandContext(cmdline *CommandLine) error {
 	var prevArgIsFlag bool
 
-	for _, a := range args {
+	for idx, a := range cmdline.Args {
 		hasFlagPrefix, isEnvVariable := strings.HasPrefix(a, "-"), strings.ContainsRune(a, '=')
 		shouldSkipArg := prevArgIsFlag || hasFlagPrefix || isEnvVariable
 
 		if !shouldSkipArg {
-			if c := trimColonRight(removeFilePath(a)); isRuneLetterAt(c, 0) {
-				return c
+			cmdline.Sub = &SubCommand{
+				Command: a,
+				Args: cmdline.Args[idx+1:],
 			}
+			return nil
 		}
 
 		prevArgIsFlag = hasFlagPrefix
 	}
-
-	return ""
+	return errors.New("scriptfile not found")
 }
 
-func parseCommandContextPython(args []string) string {
+
+// In most cases, the best context is the first non-argument / environment variable, if it exists
+func parseCommandContextRuby(cmdline *CommandLine) error {
+	var prevArgIsFlag bool
+
+	for idx, a := range cmdline.Args {
+		hasFlagPrefix, isEnvVariable := strings.HasPrefix(a, "-"), strings.ContainsRune(a, '=')
+		shouldSkipArg := prevArgIsFlag || hasFlagPrefix || isEnvVariable
+
+		if !shouldSkipArg {
+			cmdline.Ruby = &RubyArgs{
+				FilePath: a,
+				Args: cmdline.Args[idx+1:],
+			}
+			return nil
+		}
+
+		prevArgIsFlag = hasFlagPrefix
+	}
+	return errors.New("scriptfile not found")
+}
+
+func parseCommandContextPython(cmdline *CommandLine) error {
 	var (
 		prevArgIsFlag bool
 		moduleFlag    bool
 	)
 
-	for _, a := range args {
+	for idx, a := range cmdline.Args {
 		hasFlagPrefix, isEnvVariable := strings.HasPrefix(a, "-"), strings.ContainsRune(a, '=')
 
 		shouldSkipArg := prevArgIsFlag || hasFlagPrefix || isEnvVariable
 
 		if !shouldSkipArg || moduleFlag {
-			if c := trimColonRight(removeFilePath(a)); isRuneLetterAt(c, 0) {
-				return c
+			cmdline.Python = &PythonArgs{
+				FilePath: a,
+				Args: cmdline.Args[idx+1:],
 			}
+			return nil
 		}
 
 		if hasFlagPrefix && a == "-m" {
@@ -160,13 +201,13 @@ func parseCommandContextPython(args []string) string {
 		prevArgIsFlag = hasFlagPrefix
 	}
 
-	return ""
+	return errors.New("scriptfile not found")
 }
 
-func parseCommandContextJava(args []string) string {
+func parseCommandContextJava(cmdline *CommandLine) error {
 	prevArgIsFlag := false
 
-	for _, a := range args {
+	for idx, a := range cmdline.Args {
 		hasFlagPrefix := strings.HasPrefix(a, "-")
 		includesAssignment := strings.ContainsRune(a, '=') ||
 			strings.HasPrefix(a, "-X") ||
@@ -174,32 +215,14 @@ func parseCommandContextJava(args []string) string {
 			strings.HasPrefix(a, "-verbose:")
 		shouldSkipArg := prevArgIsFlag || hasFlagPrefix || includesAssignment
 		if !shouldSkipArg {
-			arg := removeFilePath(a)
-
-			if arg = trimColonRight(arg); isRuneLetterAt(arg, 0) {
-				if strings.HasSuffix(arg, javaJarExtension) {
-					return arg[:len(arg)-len(javaJarExtension)]
-				}
-
-				if strings.HasPrefix(arg, javaApachePrefix) {
-					// take the project name after the package 'org.apache.' while stripping off the remaining package
-					// and class name
-					arg = arg[len(javaApachePrefix):]
-					if idx := strings.Index(arg, "."); idx != -1 {
-						return arg[:idx]
-					}
-				}
-				if idx := strings.LastIndex(arg, "."); idx != -1 && idx+1 < len(arg) {
-					// take just the class name without the package
-					return arg[idx+1:]
-				}
-
-				return arg
+			cmdline.Java = &JavaArgs{
+				ClassName: a,
+				Args: cmdline.Args[idx+1:],
 			}
+			return nil
 		}
 
 		prevArgIsFlag = hasFlagPrefix && !includesAssignment && a != javaJarFlag
 	}
-
-	return ""
+	return errors.New("classname not found")
 }
