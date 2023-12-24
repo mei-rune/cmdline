@@ -63,7 +63,10 @@ type PythonArgs struct {
 type JavaArgs struct {
 	ClassName string
 	JmxEnable bool
-	JmxPort   int
+	JmxPort         string
+	JmxSsl          bool
+	JmxAuthenticate bool
+
 	Args        []string
 }
 
@@ -205,6 +208,11 @@ func parseCommandContextPython(cmdline *CommandLine) error {
 }
 
 func parseCommandContextJava(cmdline *CommandLine) error {
+	var jmxremoteEnable bool
+	var jmxremotePort string
+	var jmxremoteSsl bool
+	var jmxremoteAuthenticate bool
+
 	prevArgIsFlag := false
 
 	for idx, a := range cmdline.Args {
@@ -218,8 +226,31 @@ func parseCommandContextJava(cmdline *CommandLine) error {
 			cmdline.Java = &JavaArgs{
 				ClassName: a,
 				Args: cmdline.Args[idx+1:],
+				JmxEnable: jmxremoteEnable,
+				JmxPort: jmxremotePort,
+				JmxSsl: jmxremoteSsl,
+				JmxAuthenticate: jmxremoteAuthenticate,
 			}
 			return nil
+		}
+
+		if strings.HasPrefix(a, "-Dcom.sun.management.jmxremote=") {
+			s := strings.TrimPrefix(a, "-Dcom.sun.management.jmxremote=")
+			jmxremoteEnable = strings.ToLower(s) == "true"
+		}
+
+		if strings.HasPrefix(a, "-Dcom.sun.management.jmxremote.port=") {
+			jmxremotePort = strings.TrimPrefix(a, "-Dcom.sun.management.jmxremote.port=")
+		}
+
+		if strings.HasPrefix(a, "-Dcom.sun.management.jmxremote.ssl") {
+			s := strings.TrimPrefix(a, "-Dcom.sun.management.jmxremote.ssl")
+			jmxremoteSsl = strings.ToLower(s) == "true"
+		}
+
+		if strings.HasPrefix(a, "-Dcom.sun.management.jmxremote.authenticate") {
+			s := strings.TrimPrefix(a, "-Dcom.sun.management.jmxremote.authenticate")
+			jmxremoteAuthenticate = strings.ToLower(s) == "true"
 		}
 
 		prevArgIsFlag = hasFlagPrefix && !includesAssignment && a != javaJarFlag
