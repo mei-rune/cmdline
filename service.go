@@ -2,6 +2,7 @@ package cmdline
 
 import (
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"unicode"
@@ -42,35 +43,37 @@ type CommandLine struct {
 
 type SubCommand struct {
 	Command string
-	Args        []string
+	Args    []string
 }
 
 type RubyArgs struct {
 	FilePath string
-	Args        []string
+	Args     []string
 }
 
 type PythonArgs struct {
 	FilePath string
-	Args        []string
+	Args     []string
 }
 
 type JavaArgs struct {
-	ClassName string
-	JmxEnable bool
+	ClassName       string
+	JmxEnable       bool
 	JmxPort         string
 	JmxSsl          bool
 	JmxAuthenticate bool
 
-	Args        []string
+	Args []string
 }
 
-func ParseCommandLine(s string) (*CommandLine, error) {
+func ParseCommandLine(isWindows bool, s string) (*CommandLine, error) {
 	if len(s) == 0 {
 		return &CommandLine{}, nil
 	}
 
-	_, args, err := shellwords.ParseWithEnvs(s)
+	p := shellwords.NewParser()
+	p.IsWindows = isWindows
+	_, args, err := p.ParseWithEnvs(s)
 	if err != nil {
 		return nil, err
 	}
@@ -81,10 +84,10 @@ func ParseCommandLine(s string) (*CommandLine, error) {
 	exe := args[0]
 	// trim any quotes from the executable
 	exe = strings.Trim(exe, "\"")
-	return Parse(exe, args[1:])
+	return Parse(isWindows, exe, args[1:])
 }
 
-func Parse(exe string, args []string) (*CommandLine, error) {
+func Parse(isWindows bool, exe string, args []string) (*CommandLine, error) {
 	c := &CommandLine{
 		ExecutePath: exe,
 		Args:        args,
@@ -141,7 +144,7 @@ func parseCommandContext(cmdline *CommandLine) error {
 		if !shouldSkipArg {
 			cmdline.Sub = &SubCommand{
 				Command: a,
-				Args: cmdline.Args[idx+1:],
+				Args:    cmdline.Args[idx+1:],
 			}
 			return nil
 		}
@@ -150,7 +153,6 @@ func parseCommandContext(cmdline *CommandLine) error {
 	}
 	return errors.New("scriptfile not found")
 }
-
 
 // In most cases, the best context is the first non-argument / environment variable, if it exists
 func parseCommandContextRuby(cmdline *CommandLine) error {
@@ -163,7 +165,7 @@ func parseCommandContextRuby(cmdline *CommandLine) error {
 		if !shouldSkipArg {
 			cmdline.Ruby = &RubyArgs{
 				FilePath: a,
-				Args: cmdline.Args[idx+1:],
+				Args:     cmdline.Args[idx+1:],
 			}
 			return nil
 		}
@@ -187,7 +189,7 @@ func parseCommandContextPython(cmdline *CommandLine) error {
 		if !shouldSkipArg || moduleFlag {
 			cmdline.Python = &PythonArgs{
 				FilePath: a,
-				Args: cmdline.Args[idx+1:],
+				Args:     cmdline.Args[idx+1:],
 			}
 			return nil
 		}
@@ -210,6 +212,8 @@ func parseCommandContextJava(cmdline *CommandLine) error {
 
 	prevArgIsFlag := false
 
+	fmt.Println(cmdline.Args)
+
 	for idx, a := range cmdline.Args {
 		hasFlagPrefix := strings.HasPrefix(a, "-")
 		includesAssignment := strings.ContainsRune(a, '=') ||
@@ -219,11 +223,11 @@ func parseCommandContextJava(cmdline *CommandLine) error {
 		shouldSkipArg := prevArgIsFlag || hasFlagPrefix || includesAssignment
 		if !shouldSkipArg {
 			cmdline.Java = &JavaArgs{
-				ClassName: a,
-				Args: cmdline.Args[idx+1:],
-				JmxEnable: jmxremoteEnable,
-				JmxPort: jmxremotePort,
-				JmxSsl: jmxremoteSsl,
+				ClassName:       a,
+				Args:            cmdline.Args[idx+1:],
+				JmxEnable:       jmxremoteEnable,
+				JmxPort:         jmxremotePort,
+				JmxSsl:          jmxremoteSsl,
 				JmxAuthenticate: jmxremoteAuthenticate,
 			}
 			return nil
@@ -232,6 +236,8 @@ func parseCommandContextJava(cmdline *CommandLine) error {
 		if strings.HasPrefix(a, "-Dcom.sun.management.jmxremote=") {
 			s := strings.TrimPrefix(a, "-Dcom.sun.management.jmxremote=")
 			jmxremoteEnable = strings.ToLower(s) == "true"
+		} else if a == "-Dcom.sun.management.jmxremote" {
+			jmxremoteEnable = true
 		}
 
 		if strings.HasPrefix(a, "-Dcom.sun.management.jmxremote.port=") {
@@ -241,11 +247,15 @@ func parseCommandContextJava(cmdline *CommandLine) error {
 		if strings.HasPrefix(a, "-Dcom.sun.management.jmxremote.ssl") {
 			s := strings.TrimPrefix(a, "-Dcom.sun.management.jmxremote.ssl")
 			jmxremoteSsl = strings.ToLower(s) == "true"
+		} else if a == "-Dcom.sun.management.jmxremote.ssl" {
+			jmxremoteSsl = true
 		}
 
 		if strings.HasPrefix(a, "-Dcom.sun.management.jmxremote.authenticate") {
 			s := strings.TrimPrefix(a, "-Dcom.sun.management.jmxremote.authenticate")
 			jmxremoteAuthenticate = strings.ToLower(s) == "true"
+		} else if a == "-Dcom.sun.management.jmxremote.authenticate" {
+			jmxremoteAuthenticate = true
 		}
 
 		prevArgIsFlag = hasFlagPrefix && !includesAssignment && a != javaJarFlag
